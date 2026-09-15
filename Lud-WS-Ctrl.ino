@@ -109,7 +109,10 @@
 #include <Arduino.h>
 #include <Wire.h>
 #include <Adafruit_ADS1X15.h>
-
+#include "serial_protocol.h" 
+// Lud-WS-Ctrl.ino
+#define MCU_ID 'C'
+#include "comunicazioni_mcu.h"
 
 /* ============================================================================
  *  SEZIONE 1 - CONFIGURAZIONE GENERALE
