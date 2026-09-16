@@ -2,7 +2,8 @@ CTRL Keyboards Pots Botts etc.
 
 
 
-V 0.0.1
+V 0.0.2
+
 
 
 MCU: Pi Pico2 RP2350
