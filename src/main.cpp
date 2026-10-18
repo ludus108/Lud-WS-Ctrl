@@ -134,7 +134,15 @@
   #define DPRINTLN(x)    do {} while (0)
   #define DPRINTF(...)   do {} while (0)
 #endif
+// ===== STATISTICHE PER dumpStatus =====
+static uint32_t g_notesSent   = 0;
+static uint32_t g_potsSent    = 0;
+static uint32_t g_buttonsSent = 0;
+static uint32_t g_cmdReceived = 0;
+static uint32_t g_pongSent    = 0;
 
+// Forward declaration
+void dumpStatus();
 /* --- UART verso il router --------------------------------------------------*/
 static const int      SERIAL1_TX_PIN = 0;
 static const int      SERIAL1_RX_PIN = 1;
@@ -426,6 +434,7 @@ static void sendNoteTo(char cat, uint8_t status, uint8_t pitch, uint8_t velocity
   Serial1.write(velocity);
   Serial1.write((uint8_t)'&');
   Serial1.write((uint8_t)'!');
+  g_notesSent++;                    // ← aggiungi qui
 
   DPRINTF("[TX] Note -> %c : %s %s (%d) vel=%d\n",
           cat,
@@ -468,6 +477,7 @@ static void dispatchNote(uint8_t status, uint8_t pitch, uint8_t velocity) {
 }
 
 static void sendPot(char cat, uint8_t id, uint8_t value) {
+	g_potsSent++;
   Serial1.write((uint8_t)cat);
   Serial1.write((uint8_t)'P');
   Serial1.write(id);
@@ -479,6 +489,7 @@ static void sendPot(char cat, uint8_t id, uint8_t value) {
 }
 
 static void sendButton(char cat, uint8_t id, uint8_t value) {
+	g_buttonsSent++;
   Serial1.write((uint8_t)cat);
   Serial1.write((uint8_t)'B');
   Serial1.write(id);
@@ -490,6 +501,7 @@ static void sendButton(char cat, uint8_t id, uint8_t value) {
 }
 
 static void sendPingReply() {
+	g_pongSent++;
   Serial1.write((uint8_t)'p');
   Serial1.write((uint8_t)'&');
   Serial1.write((uint8_t)'!');
@@ -507,6 +519,13 @@ static uint8_t rxBuf[RX_BUF_SIZE];
 static uint8_t rxLen = 0;
 
 static void processRxCommand(const uint8_t* buf, uint8_t len) {
+g_cmdReceived++;
+   
+    // Trigger dump
+    if (len == 3 && buf[0] == '?' && buf[1] == '&' && buf[2] == '!') {
+        dumpStatus();
+        return;
+    }
 
   DPRINTF("[RX] Comando ricevuto (%d byte):", len);
   for (uint8_t i = 0; i < len; i++) DPRINTF(" %02X", buf[i]);
@@ -518,18 +537,16 @@ static void processRxCommand(const uint8_t* buf, uint8_t len) {
     sendPingReply();
     return;
   }
-
-  // --- Comandi "T..." a 5 byte -------------------------------------------
-  if (len == 5 && buf[0] == 'T' && buf[3] == '&' && buf[4] == '!') {
-
-    if (buf[1] == 'M') {
-      if (buf[2] <= 4) {
-        Tast_Mode = buf[2];
-        DPRINTF("[RX] -> Tast_Mode = %d\n", Tast_Mode);
-      } else {
-        DPRINTF("[RX] -> Tast_Mode IGNORATO (valore %d non valido)\n", buf[2]);
-      }
-      return;
+	
+	 // Comandi 'T'
+    if (len == 5 && buf[0] == 'T' && buf[3] == '&' && buf[4] == '!') {
+        switch (buf[1]) {
+            case 'M': if (buf[2] <= 4)  Tast_Mode  = buf[2]; break;
+            case 'S': if (buf[2] <= 31) Split_Note = buf[2]; break;
+            case '?': dumpStatus(); break;   // ← aggiungi
+            default: break;
+        }
+        return;
     }
 
     if (buf[1] == 'S') {
@@ -544,7 +561,6 @@ static void processRxCommand(const uint8_t* buf, uint8_t len) {
       }
       return;
     }
-  }
 
   DPRINTLN("[RX] -> Comando NON RICONOSCIUTO");
 }
@@ -786,7 +802,67 @@ static void scanButtons() {
   }
 }
 
+void dumpStatus() {
+    Serial.println();
+    Serial.println("[DUMP] ========== CTRL STATUS ==========");
+    Serial.printf("[DUMP] mcu=C uptime=%lu ms\n", millis());
 
+    // ===== MODE =====
+    Serial.println("[DUMP] --- MODE ---");
+    Serial.printf("[DUMP] Tast_Mode=%u Split_Note=%u\n", Tast_Mode, Split_Note);
+
+    // ===== RX =====
+    Serial.println("[DUMP] --- RX ---");
+    Serial.printf("[DUMP] rxLen=%u\n", rxLen);
+
+    // ===== POTS (ADS) =====
+    Serial.println("[DUMP] --- POTS ---");
+    size_t nAds = sizeof(adsGroups) / sizeof(adsGroups[0]);
+    for (size_t g = 0; g < nAds; g++) {
+        for (int ch = 0; ch < 4; ch++) {
+            Serial.printf("[DUMP] pot[%zu] ch%d cat=%c id=%u filt=%.1f last=%d\n",
+                          g, ch,
+                          adsGroups[g].cat[ch],
+                          adsGroups[g].id[ch],
+                          adsGroups[g].filtered[ch],
+                          adsGroups[g].lastMapped[ch]);
+        }
+    }
+
+    // ===== BUTTONS (PCF) =====
+    Serial.println("[DUMP] --- BUTTONS ---");
+    size_t nPcf = sizeof(pcfGroups) / sizeof(pcfGroups[0]);
+    for (size_t g = 0; g < nPcf; g++) {
+        Serial.printf("[DUMP] pcf[%zu] outState=0x%02X\n",
+                      g, pcfGroups[g].outputState);
+        for (int ch = 0; ch < 8; ch++) {
+            if (pcfGroups[g].type[ch] != 0) {
+                Serial.printf("[DUMP]   ch%d cat=%c id=%u deb=%d last=%u\n",
+                              ch,
+                              pcfGroups[g].cat[ch],
+                              pcfGroups[g].id[ch],
+                              pcfGroups[g].debounced[ch],
+                              pcfGroups[g].lastChange[ch]);
+            }
+        }
+    }
+
+    // ===== KEYBOARD =====
+    Serial.println("[DUMP] --- KEYBOARD ---");
+    Serial.print("[DUMP] stable=[");
+    for (int i = 0; i < KEY_NUM; i++) Serial.print(keyStable[i] ? '1' : '0');
+    Serial.println("]");
+
+    // ===== TRAFFIC =====
+    Serial.println("[DUMP] --- TRAFFIC ---");
+    Serial.printf("[DUMP] notes_sent=%lu pots_sent=%lu buttons_sent=%lu\n",
+                  g_notesSent, g_potsSent, g_buttonsSent);
+    Serial.printf("[DUMP] cmd_received=%lu pong_sent=%lu\n",
+                  g_cmdReceived, g_pongSent);
+
+    Serial.println("[DUMP] ==========================================");
+    Serial.println();
+}
 /* ============================================================================
  *  SEZIONE 16 - SETUP
  * ==========================================================================*/
@@ -835,6 +911,10 @@ void setup() {
  * ==========================================================================*/
 
 void loop() {
+	    if (Serial.available()) {
+        char c = Serial.read();
+        if (c == '?') dumpStatus();
+    }
   handleSerialRx();   // 1) comandi in arrivo
   scanKeyboard();     // 2) tastiera
   scanPots();         // 3) potenziometri (con filtro adattivo)
